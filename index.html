@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LIRE — epub reader</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Lora:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,wght@0,300;0,400;1,300;1,400&family=Noto+Serif+SC:wght@300;400&family=Space+Mono:wght@400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f0e8;
+    --paper: #faf7f2;
+    --ink: #1a1410;
+    --ink-light: #5a4f45;
+    --ink-faint: #a09080;
+    --accent: #8b3a2a;
+    --accent-soft: #c4705a;
+    --border: #d4c9b8;
+    --selection: #68C7C9;
+    --serif: 'EB Garamond', Georgia, serif;
+    --display: 'Playfair Display', Georgia, serif;
+    --mono: 'Space Mono', monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  ::selection { background: var(--selection); color: var(--ink); }
+  ::-moz-selection { background: var(--selection); color: var(--ink); }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--serif);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--paper);
+    z-index: 100;
+    flex-shrink: 0;
+    gap: 16px;
+  }
+  .logo {
+    font-family: var(--display);
+    font-size: 20px;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    font-style: italic;
+    flex-shrink: 0;
+  }
+  .logo span {
+    font-style: normal;
+    color: var(--ink-faint);
+    font-size: 10px;
+    font-family: var(--mono);
+    letter-spacing: 0.2em;
+    display: block;
+    margin-top: -3px;
+  }
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--ink-light);
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    padding: 7px 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-soft); border-color: var(--accent-soft); }
+
+  .toolbar-sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
+
+  .tg {
+    display: none;
+    align-items: center;
+    gap: 7px;
+  }
+  .tg.on { display: flex; }
+  .tg-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+  }
+
+  .icon-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--ink-light);
+    width: 28px; height: 28px;
+    cursor: pointer;
+    font-size: 13px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .icon-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .size-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--ink-faint);
+    min-width: 20px;
+    text-align: center;
+  }
+  .font-select {
+    background: var(--paper);
+    border: 1px solid var(--border);
+    color: var(--ink-light);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 6px 8px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .font-select:hover, .font-select:focus { border-color: var(--accent); color: var(--accent); }
+
+  /* LAYOUT */
+  .app {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* SIDEBAR — its own scroll, fully independent */
+  .sidebar {
+    width: 252px;
+    min-width: 252px;
+    border-right: 1px solid var(--border);
+    background: var(--paper);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.28s ease, min-width 0.28s ease, border 0.28s ease;
+    flex-shrink: 0;
+  }
+  .sidebar.collapsed { width: 0; min-width: 0; border-right: none; }
+  .sidebar-header {
+    padding: 15px 17px 9px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sidebar-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+  }
+  .toc-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 5px 0;
+    overscroll-behavior: contain;
+  }
+  .toc-list::-webkit-scrollbar { width: 3px; }
+  .toc-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .toc-item {
+    padding: 8px 17px;
+    font-family: var(--serif);
+    font-size: 13px;
+    color: var(--ink-light);
+    cursor: pointer;
+    transition: all 0.15s;
+    border-left: 2px solid transparent;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .toc-item:hover {
+    color: var(--ink);
+    background: rgba(139,58,42,0.04);
+    border-left-color: var(--accent-soft);
+    white-space: normal;
+  }
+  .toc-item.active {
+    color: var(--accent);
+    background: rgba(139,58,42,0.07);
+    border-left-color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* READER — its own scroll */
+  .reader-wrap {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 24px;
+    overscroll-behavior: contain;
+  }
+  .reader-wrap::-webkit-scrollbar { width: 5px; }
+  .reader-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* LANDING */
+  .landing {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+    padding: 60px 24px;
+    text-align: center;
+    width: 100%;
+  }
+  .drop-zone {
+    width: 340px;
+    max-width: 100%;
+    border: 1.5px dashed var(--border);
+    padding: 48px 36px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: all 0.22s;
+    background: var(--paper);
+  }
+  .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); background: rgba(139,58,42,0.03); }
+  .drop-icon { font-size: 34px; }
+  .drop-title { font-family: var(--display); font-size: 20px; color: var(--ink); font-style: italic; }
+  .drop-sub { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); letter-spacing: 0.12em; }
+  .landing-quote {
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 15px;
+    color: var(--ink-faint);
+    max-width: 380px;
+    line-height: 1.8;
+  }
+  .landing-quote cite {
+    display: block;
+    font-style: normal;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    margin-top: 10px;
+    opacity: 0.5;
+  }
+
+  /* BOOK */
+  .book-content { width: 100%; max-width: 672px; padding: 52px 0 96px; display: none; }
+  .book-content.visible { display: block; }
+  .book-meta { text-align: center; padding-bottom: 36px; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
+  .book-title-display { font-family: var(--display); font-size: 27px; color: var(--ink); margin-bottom: 6px; }
+  .book-author-display { font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em; color: var(--ink-faint); text-transform: uppercase; }
+
+  #content-area {
+    font-size: 19px;
+    line-height: 1.85;
+    color: var(--ink);
+  }
+  #content-area ::selection { background: var(--selection); color: var(--ink); }
+  #content-area p { margin-bottom: 1.3em; text-align: justify; hyphens: auto; }
+  #content-area.indent p { text-indent: 2em; }
+  #content-area h1, #content-area h2, #content-area h3, #content-area h4 {
+    font-family: var(--display);
+    font-style: italic;
+    margin: 1.8em 0 0.7em;
+    color: var(--ink);
+    line-height: 1.3;
+  }
+  #content-area h1 { font-size: 1.45em; }
+  #content-area h2 { font-size: 1.22em; }
+  #content-area h3 { font-size: 1.08em; }
+  #content-area img {
+    max-width: 100%;
+    height: auto;
+    margin: 2em auto;
+    display: block;
+    cursor: zoom-in;
+    transition: opacity 0.18s, transform 0.18s;
+    border-radius: 2px;
+  }
+  #content-area img:hover { opacity: 0.87; transform: scale(1.01); }
+  #content-area a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(139,58,42,0.35); }
+
+  .chapter-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 52px;
+    padding-top: 26px;
+    border-top: 1px solid var(--border);
+  }
+  .nav-btn {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--ink-faint);
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: 8px 0;
+    transition: color 0.2s;
+  }
+  .nav-btn:hover { color: var(--accent); }
+  .nav-btn:disabled { opacity: 0.22; cursor: default; }
+
+  /* PROGRESS */
+  .progress-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 2px; background: var(--border); z-index: 200; }
+  .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.1s; }
+
+  /* LOADING */
+  .loading { display: none; flex-direction: column; align-items: center; gap: 14px; padding: 80px; width: 100%; justify-content: center; }
+  .loading.visible { display: flex; }
+  .loading-text { font-family: var(--mono); font-size: 11px; letter-spacing: 0.15em; color: var(--ink-faint); }
+  .spinner { width: 28px; height: 28px; border: 1.5px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* LIGHTBOX */
+  .lightbox {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(8,6,4,0.9);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    backdrop-filter: blur(6px);
+  }
+  .lightbox.open { display: flex; }
+  .lightbox img {
+    max-width: 88vw;
+    max-height: 88vh;
+    object-fit: contain;
+    box-shadow: 0 32px 100px rgba(0,0,0,0.6);
+    animation: lbIn 0.22s ease;
+    cursor: default;
+    border-radius: 2px;
+  }
+  @keyframes lbIn { from { opacity: 0; transform: scale(0.93); } to { opacity: 1; transform: scale(1); } }
+  .lightbox-close {
+    position: absolute;
+    top: 18px; right: 24px;
+    color: rgba(255,255,255,0.5);
+    font-size: 30px;
+    cursor: pointer;
+    line-height: 1;
+    transition: color 0.18s;
+    font-family: var(--mono);
+    user-select: none;
+  }
+  .lightbox-close:hover { color: #fff; }
+
+  #file-input { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Lire <span>epub reader</span></div>
+  <div class="header-controls">
+
+    <div class="tg" id="tg-size">
+      <span class="tg-label">字号</span>
+      <button class="icon-btn" onclick="changeFontSize(-1)">A−</button>
+      <span class="size-label" id="font-size-label">19</span>
+      <button class="icon-btn" onclick="changeFontSize(1)">A+</button>
+    </div>
+
+    <div class="toolbar-sep" id="sep1" style="display:none"></div>
+
+    <div class="tg" id="tg-font">
+      <span class="tg-label">字体</span>
+      <select class="font-select" id="font-select" onchange="changeFont(this.value)">
+        <option value="'EB Garamond', Georgia, serif">Garamond</option>
+        <option value="'Lora', Georgia, serif">Lora</option>
+        <option value="'Source Serif 4', Georgia, serif">Source Serif</option>
+        <option value="'Noto Serif SC', serif">思源宋体</option>
+        <option value="Georgia, serif">Georgia</option>
+      </select>
+    </div>
+
+    <div class="toolbar-sep" id="sep2" style="display:none"></div>
+
+    <div class="tg" id="tg-indent">
+      <span class="tg-label">缩进</span>
+      <button class="icon-btn active" id="indent-btn" onclick="toggleIndent()" title="首行缩进">¶</button>
+    </div>
+
+    <div class="toolbar-sep" id="sep3" style="display:none"></div>
+
+    <div class="tg" id="tg-sb">
+      <button class="icon-btn" onclick="toggleSidebar()" title="目录">☰</button>
+    </div>
+
+    <div class="toolbar-sep"></div>
+
+    <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">打开 epub</button>
+    <input type="file" id="file-input" accept=".epub" onchange="loadEpub(this)">
+  </div>
+</header>
+
+<div class="app">
+  <div class="sidebar collapsed" id="sidebar">
+    <div class="sidebar-header"><div class="sidebar-title">目录</div></div>
+    <div class="toc-list" id="toc-list"></div>
+  </div>
+
+  <div class="reader-wrap" id="reader-wrap">
+
+    <div class="landing" id="landing">
+      <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="drop-icon">📖</div>
+        <div class="drop-title">拖入你的 epub</div>
+        <div class="drop-sub">或点击此处选择文件</div>
+      </div>
+      <div class="landing-quote">
+        "A reader lives a thousand lives before he dies.<br>The man who never reads lives only one."
+        <cite>— GEORGE R.R. MARTIN</cite>
+      </div>
+    </div>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <div class="loading-text">正在解析书籍…</div>
+    </div>
+
+    <div class="book-content" id="book-content">
+      <div class="book-meta" id="book-meta"></div>
+      <div id="content-area" class="indent"></div>
+      <div class="chapter-nav">
+        <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">← 上一章</button>
+        <span id="chapter-indicator" style="font-family:var(--mono);font-size:10px;color:var(--ink-faint);letter-spacing:0.1em;"></span>
+        <button class="nav-btn" id="next-btn" onclick="navigate(1)">下一章 →</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <div class="lightbox-close">×</div>
+  <img id="lightbox-img" src="" alt="" onclick="event.stopPropagation()">
+</div>
+
+<script>
+let chapters = [];
+let currentChapter = 0;
+let fontSize = 19;
+let sidebarOpen = false;
+let indentOn = true;
+
+// Drag & drop
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); tryOpen(e.dataTransfer.files[0]); });
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => { e.preventDefault(); tryOpen(e.dataTransfer.files[0]); });
+function tryOpen(f) { if (f && f.name.toLowerCase().endsWith('.epub')) processEpub(f); }
+function loadEpub(inp) { if (inp.files[0]) processEpub(inp.files[0]); }
+
+async function processEpub(file) {
+  document.getElementById('landing').style.display = 'none';
+  document.getElementById('loading').classList.add('visible');
+  document.getElementById('book-content').classList.remove('visible');
+
+  try {
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+
+    // OPF
+    const containerXml = await zip.file('META-INF/container.xml').async('string');
+    const cDoc = new DOMParser().parseFromString(containerXml, 'application/xml');
+    const opfPath = cDoc.querySelector('rootfile').getAttribute('full-path');
+    const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
+
+    const opfDoc = new DOMParser().parseFromString(await zip.file(opfPath).async('string'), 'application/xml');
+    const bookTitle = opfDoc.querySelector('title')?.textContent || file.name.replace(/\.epub$/i, '');
+    const bookAuthor = opfDoc.querySelector('creator')?.textContent || '';
+
+    // Manifest
+    const manifest = {};
+    opfDoc.querySelectorAll('manifest item').forEach(el => {
+      manifest[el.getAttribute('id')] = { href: el.getAttribute('href'), mt: el.getAttribute('media-type') };
+    });
+
+    // Image cache (all images pre-loaded as data URLs)
+    const imgCache = {};
+    for (const [p, entry] of Object.entries(zip.files)) {
+      if (/\.(jpe?g|png|gif|webp|svg|bmp)$/i.test(p)) {
+        const ext = p.split('.').pop().toLowerCase();
+        const mime = /jpe?g/.test(ext) ? 'image/jpeg' : ext === 'svg' ? 'image/svg+xml' : `image/${ext}`;
+        try {
+          const data = `data:${mime};base64,${await entry.async('base64')}`;
+          imgCache[p] = data;
+          imgCache[p.split('/').pop()] = data; // filename fallback
+        } catch(_) {}
+      }
+    }
+
+    // Spine
+    const spineHrefs = [];
+    opfDoc.querySelectorAll('spine itemref').forEach(ref => {
+      const m = manifest[ref.getAttribute('idref')];
+      if (m && m.mt === 'application/xhtml+xml') spineHrefs.push(m.href);
+    });
+
+    // TOC
+    let tocItems = [];
+    const ncxId = opfDoc.querySelector('spine')?.getAttribute('toc');
+    let ncxHref = ncxId && manifest[ncxId] ? manifest[ncxId].href : null;
+    if (!ncxHref) {
+      for (const id in manifest) {
+        if (manifest[id].mt === 'application/x-dtbncx+xml') { ncxHref = manifest[id].href; break; }
+      }
+    }
+    if (!ncxHref) {
+      for (const id in manifest) {
+        if (manifest[id].mt === 'application/xhtml+xml' && /nav/i.test(manifest[id].href)) { ncxHref = manifest[id].href; break; }
+      }
+    }
+    if (ncxHref) {
+      const ncxF = zip.file(opfDir + ncxHref) || zip.file(ncxHref);
+      if (ncxF) {
+        const ncxDoc = new DOMParser().parseFromString(await ncxF.async('string'), 'application/xml');
+        ncxDoc.querySelectorAll('navPoint').forEach(np => {
+          const label = np.querySelector('navLabel text')?.textContent?.trim() || '';
+          const src = np.querySelector('content')?.getAttribute('src') || '';
+          if (label && src) tocItems.push({ label, src: src.split('#')[0] });
+        });
+        if (!tocItems.length) {
+          ncxDoc.querySelectorAll('a').forEach(a => {
+            const label = a.textContent.trim();
+            const href = (a.getAttribute('href') || '').split('#')[0];
+            if (label && href) tocItems.push({ label, src: href });
+          });
+        }
+      }
+    }
+
+    // Load chapters
+    chapters = [];
+    for (const href of spineHrefs) {
+      const f2 = zip.file(opfDir + href) || zip.file(href);
+      if (!f2) continue;
+      const doc = new DOMParser().parseFromString(await f2.async('string'), 'application/xhtml+xml');
+      const hrefDir = (opfDir + href).slice(0, (opfDir + href).lastIndexOf('/') + 1);
+
+      // Resolve img src
+      doc.querySelectorAll('img').forEach(img => {
+        const src = img.getAttribute('src') || '';
+        if (!src || src.startsWith('data:')) return;
+        const resolved = resolveImg(src, hrefDir, imgCache);
+        if (resolved) img.setAttribute('src', resolved);
+        else img.removeAttribute('src');
+      });
+
+      // SVG <image> -> <img>
+      doc.querySelectorAll('image').forEach(img => {
+        const src = img.getAttribute('xlink:href') || img.getAttribute('href') || '';
+        if (!src || src.startsWith('data:')) return;
+        const resolved = resolveImg(src, hrefDir, imgCache);
+        if (resolved) {
+          const newImg = doc.createElement('img');
+          newImg.setAttribute('src', resolved);
+          // Copy width/height if present
+          const w = img.getAttribute('width'); const h = img.getAttribute('height');
+          if (w) newImg.style.maxWidth = w + 'px';
+          img.parentNode?.replaceChild(newImg, img);
+        }
+      });
+
+      const body = doc.querySelector('body');
+      const chTitle = doc.querySelector('title')?.textContent || doc.querySelector('h1,h2,h3')?.textContent || '';
+      chapters.push({ html: body ? body.innerHTML : '', title: chTitle.trim(), href });
+    }
+
+    // Map TOC -> chapter indices
+    const tocMapped = tocItems.map(item => {
+      const fn = item.src.split('/').pop();
+      const idx = chapters.findIndex(c => c.href === item.src || c.href.endsWith('/' + item.src) || c.href.split('/').pop() === fn);
+      return { label: item.label, ci: idx >= 0 ? idx : 0 };
+    });
+
+    // Render TOC
+    const tocList = document.getElementById('toc-list');
+    tocList.innerHTML = '';
+    const src = tocMapped.length ? tocMapped : chapters.map((c, i) => ({ label: c.title || `章节 ${i+1}`, ci: i }));
+    src.forEach(item => {
+      const el = document.createElement('div');
+      el.className = 'toc-item';
+      el.textContent = item.label;
+      el.dataset.ci = item.ci;
+      el.onclick = () => { currentChapter = item.ci; renderChapter(); };
+      tocList.appendChild(el);
+    });
+
+    document.getElementById('book-meta').innerHTML = `
+      <div class="book-title-display">${esc(bookTitle)}</div>
+      ${bookAuthor ? `<div class="book-author-display">${esc(bookAuthor)}</div>` : ''}
+    `;
+
+    document.getElementById('loading').classList.remove('visible');
+    document.getElementById('book-content').classList.add('visible');
+    ['tg-size','tg-font','tg-indent','tg-sb'].forEach(id => document.getElementById(id).classList.add('on'));
+    ['sep1','sep2','sep3'].forEach(id => document.getElementById(id).style.display = 'block');
+
+    currentChapter = 0;
+    renderChapter();
+    setTimeout(() => { sidebarOpen = false; toggleSidebar(); }, 120);
+
+  } catch(err) {
+    console.error(err);
+    document.getElementById('loading').classList.remove('visible');
+    document.getElementById('landing').style.display = 'flex';
+    alert('解析失败，请确认文件格式正确。\n' + err.message);
+  }
+}
+
+function resolveImg(src, dir, cache) {
+  if (cache[dir + src]) return cache[dir + src];
+  // Normalize path (handle ../)
+  const parts = (dir + src).split('/');
+  const stack = [];
+  for (const p of parts) { if (p === '..') stack.pop(); else if (p && p !== '.') stack.push(p); }
+  const norm = stack.join('/');
+  if (cache[norm]) return cache[norm];
+  const fname = src.split('/').pop();
+  return cache[fname] || null;
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderChapter() {
+  const ch = chapters[currentChapter];
+  if (!ch) return;
+  const area = document.getElementById('content-area');
+  area.innerHTML = ch.html;
+  area.style.fontSize = fontSize + 'px';
+  area.style.fontFamily = document.getElementById('font-select').value;
+  area.classList.toggle('indent', indentOn);
+
+  // Clean internal links
+  area.querySelectorAll('a').forEach(a => {
+    const h = a.getAttribute('href') || '';
+    if (!h.startsWith('http')) a.removeAttribute('href');
+  });
+
+  // Lightbox on images
+  area.querySelectorAll('img').forEach(img => {
+    img.addEventListener('click', () => { if (img.src) openLightbox(img.src); });
+  });
+
+  document.getElementById('reader-wrap').scrollTo({ top: 0 });
+  document.getElementById('prev-btn').disabled = currentChapter === 0;
+  document.getElementById('next-btn').disabled = currentChapter === chapters.length - 1;
+  document.getElementById('chapter-indicator').textContent = `${currentChapter + 1} / ${chapters.length}`;
+  updateTocActive();
+  updateProgress();
+}
+
+function updateTocActive() {
+  document.querySelectorAll('.toc-item').forEach(el => {
+    const active = parseInt(el.dataset.ci) === currentChapter;
+    el.classList.toggle('active', active);
+    if (active) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+function navigate(dir) {
+  const next = currentChapter + dir;
+  if (next >= 0 && next < chapters.length) { currentChapter = next; renderChapter(); }
+}
+
+function changeFontSize(d) {
+  fontSize = Math.max(13, Math.min(30, fontSize + d));
+  document.getElementById('content-area').style.fontSize = fontSize + 'px';
+  document.getElementById('font-size-label').textContent = fontSize;
+}
+
+function changeFont(v) {
+  document.getElementById('content-area').style.fontFamily = v;
+}
+
+function toggleIndent() {
+  indentOn = !indentOn;
+  document.getElementById('content-area').classList.toggle('indent', indentOn);
+  document.getElementById('indent-btn').classList.toggle('active', indentOn);
+}
+
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
+}
+
+function openLightbox(src) {
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('open');
+}
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+  document.getElementById('lightbox-img').src = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+const rw = document.getElementById('reader-wrap');
+rw.addEventListener('scroll', updateProgress);
+function updateProgress() {
+  const pct = rw.scrollTop / (rw.scrollHeight - rw.clientHeight) * 100;
+  document.getElementById('progress-fill').style.width = (isNaN(pct) ? 0 : pct) + '%';
+}
+</script>
+</body>
+</html>
